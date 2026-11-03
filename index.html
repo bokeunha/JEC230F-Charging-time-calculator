@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Battery Charging Time Calculator</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; }
+input, select { margin: 4px; }
+table { border-collapse: collapse; margin-top: 20px; width: 100%; font-size: 13px; }
+th, td { border: 1px solid #ccc; padding: 5px; text-align: center; }
+th { background: #f0f0f0; }
+.warning { color:red; font-weight:bold; }
+canvas { margin-top: 30px; max-width: 1000px; }
+.bar-container { position: relative; width: 100%; height: 16px; background: #eee; border: 1px solid #aaa; }
+.bar-window { position: absolute; height: 100%; background: #4caf50; }
+</style>
+</head>
+<body>
+
+<h2>Battery Charging Time Calculator</h2>
+<h3>Input</h3>
+
+<label>Battery Pack Count:
+<select id="packCount">
+<option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+</select></label><br>
+
+<label>1 Pack Energy (kWh):
+<input type="number" id="packEnergy" value="90"></label><br>
+
+<label>Cell Temperature (°C):
+<input type="number" id="cellTemp" value="25"></label><br>
+
+<label>Charger Max Power (kW):
+<input type="number" id="chargerPower" value="250"><span>(CSU limit 250 kW)</span></label><br>
+
+<label>SOC Window (%):
+<input type="number" id="socWindow" value="85" oninput="updateSocInfo()"></label><br>
+
+<label>Actual SOC Low (%):
+<input type="number" id="socLow" value="10" oninput="updateSocInfo()"></label><br>
+
+<div>Actual SOC Max (%): <span id="socMaxDisplay"></span><span id="socWarning" class="warning"></span></div>
+<div class="bar-container"><div id="socBar" class="bar-window"></div></div>
+<br>
+
+<label>Useful SOC Start (%):
+<input type="number" id="usefulStart" value="20"></label><br>
+
+<label>Useful SOC End (%):
+<input type="number" id="usefulEnd" value="100"></label><br>
+
+<button onclick="calculate()">Calculate</button>
+
+<h3>Result (5% Display)</h3>
+<table>
+<thead>
+<tr>
+<th>Useful SOC Range (%)</th>
+<th>Each Pack Chargeability (kW)</th>
+<th>Charging Power from Charger to Machine (kW)</th>
+<th>Delivered Energy (kWh)</th>
+<th>Accumulated Charging Time (h)</th>
+</tr>
+</thead>
+<tbody id="resultBody"></tbody>
+</table>
+
+<h3>Charging Behavior Graph</h3>
+<canvas id="mainChart"></canvas>
+
+<script>
+function updateSocInfo(){
+  const low=+socLow.value;
+  const win=+socWindow.value;
+  const max=low+win;
+  socMaxDisplay.textContent=max.toFixed(1);
+  socWarning.textContent=max>100?" (Over 100%)":"";
+  socBar.style.left=Math.max(0,low)+"%";
+  socBar.style.width=Math.max(0,Math.min(100,max)-low)+"%";
+}
+
+let chart;
+async function calculate(){
+  const payload = {
+    packCount: +packCount.value,
+    packEnergy: +packEnergy.value,
+    cellTemp: +cellTemp.value,
+    socWindow: +socWindow.value,
+    socLow: +socLow.value,
+    usefulStart: +usefulStart.value,
+    usefulEnd: +usefulEnd.value,
+    chargerPower: +chargerPower.value
+  };
+
+  // 서버리스 함수로 데이터 전송 및 계산 결과 요청
+  const response = await fetch('/.netlify/functions/calculate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+
+  if(chart) chart.destroy();
+
+  resultBody.innerHTML = "";
+  data.rows.forEach(row => {
+    resultBody.insertAdjacentHTML("beforeend",`
+      <tr>
+        <td>${row.range}</td>
+        <td>${row.packPower}</td>
+        <td>${row.totalPower}</td>
+        <td>${row.energy}</td>
+        <td>${row.time}</td>
+      </tr>`);
+  });
+
+  chart = new Chart(mainChart, {
+    type:'line',
+    data:{
+      labels: data.socArr,
+      datasets:[
+        { label:'Charging Power (kW)', data: data.powerArr, yAxisID:'yPower', borderWidth:2 },
+        { label:'Accumulated Charging Time (h)', data: data.timeArr, yAxisID:'yTime', borderDash:[5,5], borderWidth:2 }
+      ]
+    },
+    options:{
+      scales:{
+        x:{title:{display:true,text:'Useful SOC (%)'}},
+        yPower:{type:'linear',position:'left',title:{display:true,text:'Charging Power (kW)'}},
+        yTime:{type:'linear',position:'right',title:{display:true,text:'Accumulated Charging Time (h)'},grid:{drawOnChartArea:false}}
+      }
+    }
+  });
+}
+
+updateSocInfo();
+</script>
+</body>
+</html>
